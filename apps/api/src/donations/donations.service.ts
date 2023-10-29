@@ -423,7 +423,7 @@ export class DonationsService {
   async getUserDonationById(
     id: string,
     keycloakId: string,
-    email: string,
+    email?: string,
   ): Promise<(Donation & { person: Person | null }) | null> {
     return await this.prisma.donation.findFirst({
       where: {
@@ -480,6 +480,28 @@ export class DonationsService {
     const campaignId = intent.metadata.camapaignId
     const campaign = await this.campaignService.validateCampaignId(campaignId)
     return this.createInitialDonationFromIntent(campaign, inputDto, intent)
+  }
+
+  /**
+   * Refund a stipe payment donation
+   * https://stripe.com/docs/api/refunds/create
+   * @param inputDto Refund-stripe params
+   * @returns {Promise<Stripe.Response<Stripe.Refund>>}
+   */
+  async refundStripePayment(paymentIntentId: string): Promise<Stripe.Response<Stripe.Refund>> {
+    const intent = await this.stripeClient.paymentIntents.retrieve(paymentIntentId)
+    if (!intent) {
+      throw new BadRequestException('Payment Intent is missing from stripe')
+    }
+
+    if (!intent.metadata.campaignId) {
+      throw new BadRequestException('Campaign id is missing from payment intent metadata')
+    }
+
+    return await this.stripeClient.refunds.create({
+      payment_intent: paymentIntentId,
+      reason: 'requested_by_customer',
+    })
   }
 
   /**
@@ -564,7 +586,7 @@ export class DonationsService {
 
         const status = updatePaymentDto.status || currentDonation.status
         let donorId = currentDonation.personId
-        let billingEmail = ''
+        let billingEmail: string | null = ''
         if (
           (updatePaymentDto.targetPersonId &&
             currentDonation.personId !== updatePaymentDto.targetPersonId) ||
@@ -636,7 +658,7 @@ export class DonationsService {
     }
   }
 
-  async getDonationsByUser(keycloakId: string, email: string) {
+  async getDonationsByUser(keycloakId: string, email?: string) {
     const donations = await this.prisma.donation.findMany({
       where: {
         OR: [{ billingEmail: email }, { person: { keycloakId } }],
